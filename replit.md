@@ -1,94 +1,104 @@
 # WaveSync
 
-A dark-themed Expo React Native watch party app for synchronized multi-platform video playback.
+## Overview
 
-## Architecture
+WaveSync is a real-time watch party application built with Expo (React Native) on the frontend and Express.js on the backend. Users can create or join rooms to watch videos together in sync, chat in real-time, and send direct messages. The app supports web, iOS, and Android platforms through Expo's cross-platform capabilities.
 
-### Artifacts
-- **API Server** (`artifacts/api-server/`) — Express.js + PostgreSQL + WebSocket backend
-- **WaveSync Mobile** (`artifacts/wavesync/`) — Expo React Native app
+Key features:
+- **Watch Parties**: Create/join rooms to watch YouTube videos together with synchronized playback
+- **Real-time Chat**: In-room messaging and direct messaging between users
+- **User Profiles**: Registration, login, customizable profiles with avatar colors
+- **Room Management**: Public/private rooms with invite codes, categories, and participant limits
+- **WebSocket Sync**: Real-time video state synchronization (play/pause/seek) across participants
 
-### Tech Stack
-- **Frontend**: Expo SDK, expo-router (file-based routing), React Query, Inter fonts
-- **Backend**: Express.js, Drizzle ORM, PostgreSQL, `ws` (WebSocket)
-- **Auth**: Custom token system (`wsync_{userId}:{timestamp}.{rand}`) — no JWT/Firebase
-- **Build**: esbuild for backend bundling
+## User Preferences
 
-## Key Features
-1. **Auth** — Mock social sign-in (Google/Facebook/Twitter/Apple) + email login, creates real DB user
-2. **Multi-Platform Watch Parties** — YouTube, Netflix, Prime Video, Twitch — open in native WebView, one-tap Watch Together
-3. **Video Play Detection** — JS injected into native WebView detects video play events → auto-prompts Watch Together
-4. **Platform-Aware UI** — FAB, modal, room screen, and room cards change color/branding per platform (YouTube red, Netflix red, Prime blue, Twitch purple)
-5. **Real-time Sync** — WebSocket for play/pause/seek sync and room chat broadcast
-6. **Chat** — Room chat (per-party) + direct messages between users
-7. **Profile** — Customizable avatar color (10 color options), bio editing, display name
-8. **Browsing History** — AsyncStorage-backed history with favicon grouping by date
-9. **Invite System** — 6-char invite codes + native Share sheet / clipboard copy
-10. **Friends System** — Send/accept/decline friend requests via email; FriendsContext manages state
-11. **Live Presence** — Real-time tracking of who's online and what they're watching via PresenceContext + WebSocket `presence_update` broadcasts
-12. **In-App Notifications** — NotificationBanner slides in for room invites and friend requests; accept/decline without leaving current screen
-13. **Invite Friends Modal** — From inside any room, tap the user-plus icon to invite friends via WebSocket push notification; friends list shows online/offline/in-room status
+Preferred communication style: Simple, everyday language.
 
-## Design
-- Dark theme: bg `#0A0A0F`, card `#12121A`, surface `#1A1A28`
-- Accent: purple `#9333EA`, pink `#EC4899`
-- Tab navigation: Home, Parties, Chat, Profile
-- Liquid glass tabs on iOS (falls back to BlurView classic tabs)
+## System Architecture
 
-## API Endpoints
-- `POST /api/auth/login` — upsert user by email, return token
-- `GET/POST /api/rooms` — list my rooms / create room
-- `POST /api/rooms/join` — join by invite code
-- `GET /api/rooms/:id` — room detail
-- `GET /api/rooms/:id/members` — room member list
-- `POST /api/rooms/:id/messages` — send room chat
-- `GET /api/rooms/:id/messages` — fetch room chat history
-- `POST /api/rooms/:id/leave` — leave room
-- `GET/PUT /api/users/:userId/profile` — view/update profile
-- `GET /api/dm/conversations` — DM conversation list
-- `GET /api/dm/:userId` — DM thread with user
-- `POST /api/dm/:userId` — send DM
-- `GET /api/ws` — WebSocket connection (auth via token query param)
+### Frontend (Expo/React Native)
+- **Framework**: Expo SDK 54 with expo-router for file-based routing
+- **Navigation Structure**: Tab-based layout with 4 tabs (Home, Parties, Chat, Profile), plus modal screens for auth, room creation, and room joining
+- **State Management**: TanStack React Query for server state, React Context for auth (`AuthProvider`) and WebSocket (`WSProvider`)
+- **Styling**: React Native StyleSheet with a dark theme defined in `constants/colors.ts`
+- **Fonts**: Inter font family (400, 500, 600, 700 weights) via `@expo-google-fonts/inter`
+- **Key Libraries**: expo-linear-gradient, expo-haptics, expo-clipboard, react-native-webview (for video playback), react-native-gesture-handler, react-native-keyboard-controller
 
-## WebSocket Events
-- `join_room` / `leave_room` — presence tracking
-- `sync_state` — broadcast play/pause/seek to room members
-- `chat_message` — room chat broadcast
-- `dm_message` — direct message delivery
+### Backend (Express.js)
+- **Runtime**: Node.js with TypeScript (compiled via tsx for dev, esbuild for production)
+- **API Layer**: RESTful Express routes defined in `server/routes.ts`
+- **WebSocket**: Native `ws` WebSocket server for real-time room state sync and chat, attached to the same HTTP server
+- **Authentication**: Token-based auth with Bearer tokens stored in memory map on server, persisted in AsyncStorage on client; bcrypt password hashing
+- **CORS**: Dynamic origin allowlist based on Replit environment variables, plus localhost support for dev
 
-## Database Schema
-- `users` — id, email, displayName, photoUrl, bio, avatarColor, token, createdAt
-- `rooms` — id, name, inviteCode, hostId, youtubeVideoId, youtubeVideoTitle, isPlaying, currentTime
-- `room_members` — roomId, userId
-- `messages` — id, content, senderId, roomId (nullable), recipientId (nullable), createdAt
+### Data Storage
+- **Database**: PostgreSQL (required, referenced via `DATABASE_URL` environment variable)
+- **ORM**: Drizzle ORM with PostgreSQL dialect
+- **Schema Location**: `shared/schema.ts` — shared between frontend and backend
+- **Tables**:
+  - `users` — id (UUID), username, displayName, password (hashed), avatarColor, bio
+  - `rooms` — id (UUID), name, description, hostId (FK→users), isPrivate, inviteCode, video state fields, category, participant limits
+  - `messages` — id (UUID), roomId (FK→rooms), userId (FK→users), content, type
+  - `directMessages` — referenced in storage imports (schema likely includes sender/receiver pattern)
+- **Migrations**: Drizzle Kit with `drizzle-kit push` for schema sync (output in `./migrations`)
+- **Validation**: drizzle-zod for generating Zod schemas from Drizzle table definitions
 
-## App Structure (wavesync)
+### Real-time Architecture
+- WebSocket server manages `activeRooms` map with per-room state (participants, video URL, play state, current time)
+- Clients connect via WSProvider context, which handles join/disconnect/message routing
+- Room state broadcasts exclude the sender to avoid echo
+- Video sync uses timestamp-based state tracking (`lastSyncTime`)
+
+### Project Structure
 ```
-app/
-  _layout.tsx          — root layout (AuthProvider, WebSocketProvider, QueryClient)
-  (auth)/
-    index.tsx          — login/register screen
-    _layout.tsx        — auth group layout
-  (tabs)/
-    _layout.tsx        — tab bar (liquid glass / classic blur)
-    index.tsx          — Home screen (stats, quick actions, live rooms)
-    parties.tsx        — Watch Parties (create/join modals, room list)
-    chat.tsx           — DM conversation list
-    profile.tsx        — User profile with avatar color picker
-  room/[id].tsx        — Watch party room (player, chat, members)
-  dm/[userId].tsx      — Direct message thread
-components/
-  Avatar.tsx           — Initials avatar with color
-  MessageBubble.tsx    — Chat message bubble (own/other)
-  RoomCard.tsx         — Room list card
-  KeyboardAwareScrollViewCompat.tsx
-context/
-  AuthContext.tsx      — Auth state + token management (AsyncStorage)
-  WebSocketContext.tsx — WebSocket real-time sync
-constants/
-  colors.ts            — Dark theme palette + AVATAR_COLORS
+app/                    # Expo Router file-based routing
+  (auth)/               # Auth modal group (login, register)
+  (tabs)/               # Main tab navigation (index, parties, chat, profile)
+  room/[id].tsx         # Dynamic room screen
+  create-room.tsx       # Room creation modal
+  join-room.tsx         # Join room by invite code modal
+server/                 # Express backend
+  index.ts              # Server entry, CORS setup, static serving
+  routes.ts             # API routes + WebSocket server
+  storage.ts            # Database operations (CRUD layer)
+  db.ts                 # Drizzle + pg pool setup
+  templates/            # Landing page HTML
+shared/                 # Shared between client & server
+  schema.ts             # Drizzle schema + Zod validators
+lib/                    # Frontend utilities
+  auth-context.tsx      # Auth state provider
+  ws-context.tsx        # WebSocket connection provider
+  query-client.ts       # TanStack Query config + API helpers
+constants/              # Theme colors
+components/             # Reusable UI components
+scripts/                # Build scripts for static export
 ```
 
-## Environment Variables
-- `EXPO_PUBLIC_DOMAIN` — API server domain (set to `$REPLIT_DEV_DOMAIN` in workflow)
-- `DATABASE_URL` — PostgreSQL connection string
+### Build & Deployment
+- **Dev**: Two processes — `expo:dev` for the Expo bundler and `server:dev` for the Express server
+- **Production**: Static web build via custom `scripts/build.js`, server bundled with esbuild to `server_dist/`
+- **Environment**: Relies on Replit environment variables (`REPLIT_DEV_DOMAIN`, `REPLIT_DOMAINS`, `DATABASE_URL`)
+
+## External Dependencies
+
+### Database
+- **PostgreSQL**: Primary data store, required. Connection via `DATABASE_URL` environment variable. Used for user data, rooms, messages, and session storage.
+
+### Key NPM Packages
+- **drizzle-orm** + **drizzle-kit**: ORM and migration tooling for PostgreSQL
+- **express** + **express-session**: HTTP server and session management
+- **connect-pg-simple**: PostgreSQL session store for express-session
+- **ws**: WebSocket server for real-time features
+- **bcrypt**: Password hashing
+- **@tanstack/react-query**: Server state management on the client
+- **expo-router**: File-based routing for React Native
+- **react-native-webview**: YouTube video playback in rooms
+- **zod** + **drizzle-zod**: Schema validation
+
+### Environment Variables Required
+- `DATABASE_URL`: PostgreSQL connection string
+- `EXPO_PUBLIC_DOMAIN`: Public domain for API requests from the client
+- `SESSION_SECRET`: (optional, has fallback) Secret for session signing
+- `REPLIT_DEV_DOMAIN`: Used for CORS and Expo dev server proxy
+- `REPLIT_DOMAINS`: Used for CORS allowlisting in production
